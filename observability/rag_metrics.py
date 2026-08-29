@@ -4,7 +4,7 @@ from typing import Any, Iterable
 
 import numpy as np
 
-from observability.anomaly import zscore_detector
+from observability.anomaly import mad_detector, zscore_detector
 
 
 def approximate_token_lengths(texts: Iterable[str]) -> list[int]:
@@ -27,11 +27,34 @@ def detect_text_length_shift(
 
 
 def detect_embedding_norm_shift(
-    current_norms: Iterable[float], baseline_norms: Iterable[float]
+    current_norms: Iterable[float],
+    baseline_norms: Iterable[float],
+    *,
+    threshold: float = 3.5,
 ) -> dict[str, Any]:
-    """TODO(student): implement embedding-space drift signal.
+    """Embedding-space drift signal via the mean L2 norm of embedding vectors.
 
-    No embedding model is required for the starter lab. Hidden evaluation can
-    feed precomputed norms/similarities through this stable interface.
+    No embedding model/network call is required: callers pass precomputed norms
+    (e.g. `np.linalg.norm(embedding)` per document). A shift in the mean norm is a
+    cheap, model-agnostic proxy for embedding drift -- a re-indexed KB with a
+    different embedding model version, truncated/garbled input text, or an
+    encoding bug typically shows up as a norm-scale change even before anyone
+    inspects cosine similarities.
+
+    Uses the robust median/MAD detector (`observability.anomaly.mad_detector`)
+    rather than mean/std: embedding norms across a healthy corpus are usually
+    tightly clustered, so a couple of outlier documents already in
+    `baseline_norms` should not be allowed to inflate the spread and mask a real
+    shift in `current_norms`.
     """
-    return {"is_anomaly": False, "score": 0.0, "method": "not_implemented"}
+    current = list(current_norms)
+    baseline = list(baseline_norms)
+    if not current or not baseline:
+        return {"is_anomaly": False, "score": 0.0, "method": "embedding_norm_mad", "reason": "empty_input"}
+
+    current_mean = float(np.mean(current))
+    result = mad_detector(current_mean, baseline, threshold=threshold)
+    result["method"] = "embedding_norm_mad"
+    result["metric"] = "mean_embedding_norm"
+    result["current_mean"] = current_mean
+    return result

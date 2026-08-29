@@ -11,6 +11,13 @@ models:
       - name: customer_id
         data_tests:
           - not_null
+          # Referential integrity: every order should point at a known customer.
+          # Catches upstream customer-dimension load failures/partial syncs that
+          # a not_null/unique check on orders alone would miss.
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
       - name: currency
         data_tests:
           - accepted_values:

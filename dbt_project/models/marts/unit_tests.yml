@@ -1,0 +1,48 @@
+# dbt native unit tests: run against literal mock rows (no warehouse data needed),
+# so they verify the *transformation logic* of fct_daily_revenue.sql itself -
+# distinct from `data_tests` (not_null/unique/...), which only assert facts about
+# whatever data happens to already be built. A not_null/unique test can pass on a
+# revenue number that is completely wrong (e.g. doubled by a bad join) as long as
+# that number is present and the day is not duplicated. These unit tests instead
+# assert the actual expected output for a known input.
+
+unit_tests:
+  - name: completed_orders_sum_to_expected_revenue
+    description: >
+      Baseline correctness: two completed orders for one active customer should
+      sum to the expected daily revenue, and non-completed orders / inactive
+      customers should not be counted.
+    model: fct_daily_revenue
+    given:
+      - input: ref('stg_orders')
+        rows:
+          - {order_id: 1, customer_id: C0001, amount_usd: 100.0, status: completed, order_date: '2026-08-01'}
+          - {order_id: 2, customer_id: C0001, amount_usd: 70.0, status: completed, order_date: '2026-08-01'}
+          - {order_id: 3, customer_id: C0001, amount_usd: 999.0, status: pending, order_date: '2026-08-01'}
+      - input: ref('stg_customers')
+        rows:
+          - {customer_id: C0001, is_active: true, valid_from: '2026-01-01'}
+    expect:
+      rows:
+        - {order_date: '2026-08-01', completed_order_rows: 2, daily_revenue: 170.0}
+
+  - name: duplicate_active_customer_rows_do_not_inflate_revenue
+    description: >
+      Regression test for the revenue-inflation failure mode: the customer
+      dimension has TWO active=true rows for the same customer_id (an SCD
+      data-quality violation upstream). A naive `left join ... where is_active =
+      true` would fan out and double-count the single completed order to 200.0.
+      fct_daily_revenue.sql ranks active rows by valid_from and keeps exactly one
+      per customer_id, so this must stay at 100.0 / 1 row.
+    model: fct_daily_revenue
+    given:
+      - input: ref('stg_orders')
+        rows:
+          - {order_id: 1, customer_id: C0001, amount_usd: 100.0, status: completed, order_date: '2026-08-01'}
+      - input: ref('stg_customers')
+        rows:
+          - {customer_id: C0001, is_active: true, valid_from: '2026-01-01'}
+          - {customer_id: C0001, is_active: true, valid_from: '2026-06-01'}
+    expect:
+      rows:
+        - {order_date: '2026-08-01', completed_order_rows: 1, daily_revenue: 100.0}

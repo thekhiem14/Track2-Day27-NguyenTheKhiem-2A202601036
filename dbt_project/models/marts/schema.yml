@@ -7,6 +7,13 @@ models:
       - name: order_date
         data_tests:
           - not_null
+          # One row per day is a business invariant of this fact table (it is
+          # grouped by order_date). A duplicate day would silently double-count
+          # revenue on the CEO dashboard.
+          - unique
       - name: daily_revenue
+        data_tests:
+          - not_null
+      - name: completed_order_rows
         data_tests:
           - not_null
